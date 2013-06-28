@@ -23,11 +23,21 @@
 
 #if defined(CONFIG_DEBUG_ICEDCC)
 
+//ARM 버전별로 적용
 #if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V6K) || defined(CONFIG_CPU_V7)
-		.macro	loadsp, rb, tmp
+		.macro	loadsp, rb, tmp			//.macro: 매크로
 		.endm
 		.macro	writeb, ch, rb
-		mcr	p14, 0, \ch, c0, c5, 0
+		/*
+		 * 디버깅 관련 설정 (교재 663 page / TRM 257 page)
+		 * 
+		 * - mcr이란? 코프로세서 전용 MOV명령어
+		 * - '\'의 역할? 매크로의 인자를 표현한다.
+		 * - mcr 명령의 인자?
+		 *   - p14: 코프로세서(디버거,tracer)
+		 *   - 0, c0, c5, 0: TRM 257 page 참조
+		 */
+		mcr	p14, 0, \ch, c0, c5, 0		//Debugger로 명령을 보낸다.
 		.endm
 #elif defined(CONFIG_CPU_XSCALE)
 		.macro	loadsp, rb, tmp
@@ -48,7 +58,7 @@
 #include CONFIG_DEBUG_LL_INCLUDE
 
 		.macro	writeb,	ch, rb
-		senduart \ch, \rb
+		senduart \ch, \rb			//UART로 명령을 보낸다.
 		.endm
 
 #if defined(CONFIG_ARCH_SA1100)
@@ -118,10 +128,44 @@
 /*
  * sort out different calling conventions
  */
+		/* 4byte로 메모리를 align한다는 뜻. (default: 4) */
 		.align
+		/* 이제부터 나오는opcode는 arm임을 어셈블러에게 알림 */
 		.arm				@ Always enter in ARM state
 start:
+		/* .type: symbol table에 entry에 속성을 기록한다.
+		 * start 레이블은 함수 타입이다.
+		 */
 		.type	start,#function
+
+		/*
+		 * - 이 코드가 하는 일:
+		 *   instruction(mov r0, r0)를 8번 반복합니다.
+		 *
+		 * - 탄생비화:
+		 *   옛날옛날에 어떤 거지같은 부트로더가 있었는데 그놈은 이미지 올려놓은 램주소에서 
+		 *   8 Word(32byte = 0x20)만큼의 하위 주소를 call해 버렸었고 올려놓은 주소에서
+		 *   offset(0x24~0x30)사이에 magic number를 찾았답니다. 그래서 그런 부트로더들 
+		 *   맞춰줄려고 head.s에 의미없는 instruction(mov r0, r0)를 8번(8 Word)해서 소비합니다. 
+		 *
+		 *   참조: 
+		 *     - http://www.iamroot.org/xe/QnA/23099
+		 *     - http://comments.gmane.org/gmane.linux.ports.arm.kernel/26690
+		 *
+		 * - ARM(), THUMB() 매크로:
+		 *   CONFIG_THUMB2_KERNEL 옵션이 켜져 있으면 ARM()매크로는 버리고  THUMB()매크로만 사용합니다.
+		 *   반대의 경우는 ARM()매크로만 사용하고, THUMB()는 버립니다.
+		 *
+		 * - instruction(b  1f)에서 '1f'의 뜻:
+		 *   '1'은 레이블 이름. 'f'는 forward방향을 뜻함. (f: forward / b: before)
+		 *
+		 * - BSYM()매크로:
+		 *   #ifdef CONFIG_THUMB2_KERNEL
+		 *     #define BSYM(sym)	sym + 1
+		 *   #else	
+		 *     #define BSYM(sym)	sym
+		 *   #endif	
+		 */
 		.rept	7
 		mov	r0, r0
 		.endr
@@ -130,13 +174,37 @@ start:
  THUMB(		adr	r12, BSYM(1f)	)
  THUMB(		bx	r12		)
 
+		/*
+		 * - (.word 0x016f2818)의 뜻:
+		 *   부트로더에게 linux kernel zImage임을 알려주는 매직넘버입니다.
+		 *   정말인지 zImage를 실제로 읽어서 확인해 VOA요.
+		 *
+		 *     $ hd arch/arm/boot/zImage | head -n3
+		 *     00000000  00 00 a0 e1 00 00 a0 e1  00 00 a0 e1 00 00 a0 e1
+		 *     *
+		 *     00000020  02 00 00 ea 18 28 6f 01  00 00 00 00 10 3b 3d 00
+		 *                           -----------  ----------- -----------
+		 *                           0x016f2818   start       _edata
+		 *
+		 * - (.word start)의 뜻:
+		 *   start는 start 레이블을 뜻하며 실제로 0x00000000이 들어갑니다.
+		 *
+		 * - (.word _edata)의 뜻:
+		 *   _edata는 zImage의 끝을 뜻하며, arch/arm/kernel/vmlinux.lds.S 에서 정의합니다.
+		 */
 		.word	0x016f2818		@ Magic numbers to help the loader
 		.word	start			@ absolute load/run zImage address
 		.word	_edata			@ zImage end address
  THUMB(		.thumb			)
 1:
+		/* mrs란? move to register from special register */
 		mrs	r9, cpsr
+
+		/* CONFIG_ARM_VIRT_EXT란?
+		 * firmware의 실시간 지원 없이 하이퍼바이저를 설치하기 위한 ARM 가상화 확장 옵션
+		 */
 #ifdef CONFIG_ARM_VIRT_EXT
+		/* b는 이동. bl은 lr=pc 후 이동 */
 		bl	__hyp_stub_install	@ get into SVC mode, reversibly
 #endif
 		mov	r7, r1			@ save architecture ID
