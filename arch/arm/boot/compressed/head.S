@@ -275,30 +275,38 @@ not_angel:
 		//link reg 에 pc를 저장하고 cache_on로jump
 		bl	cache_on
 
-restart:	adr	r0, LC0
+restart:	adr	r0, LC0			// pc에서 LC0까지의 상대 주소를 r0에 저장
+						//
 		ldmia	r0, {r1, r2, r3, r6, r10, r11, r12}
+						// LC0 에 있는 값들을 순서대로 r1부터 r12까지 저장.
 		ldr	sp, [r0, #28]
+						// LC0 끝부분을 sp에 저장.
+//2013/07/13 종료
+//2013/07/20 시작
 
 		/*
 		 * We might be running at a different address.  We need
 		 * to fix up various pointers.
 		 */
 		sub	r0, r0, r1		@ calculate the delta offset
+						//r0 : runtime의 LC0 address, r1 : compile time의 LC0 address
 		add	r6, r6, r0		@ _edata
+						// r6 : runtime의 _edata
 		add	r10, r10, r0		@ inflated kernel size location
+						// r10 : runtime 의 inflated kernel size location
 
 		/*
 		 * The kernel build system appends the size of the
 		 * decompressed kernel at the end of the compressed data
 		 * in little-endian form.
 		 */
-		ldrb	r9, [r10, #0]
-		ldrb	lr, [r10, #1]
-		orr	r9, r9, lr, lsl #8
-		ldrb	lr, [r10, #2]
-		ldrb	r10, [r10, #3]
-		orr	r9, r9, lr, lsl #16
-		orr	r9, r9, r10, lsl #24
+		ldrb	r9, [r10, #0]		//r9 = *(input_data_end - 4)
+		ldrb	lr, [r10, #1]		//lr = *(input_data_end - 3)
+		orr	r9, r9, lr, lsl #8	//r9 = r9 | (lr << 8)
+		ldrb	lr, [r10, #2]		//lr = *(input_data_end - 2)
+		ldrb	r10, [r10, #3]		//r10 = *(input_data_end - 1)
+		orr	r9, r9, lr, lsl #16	//r9 = r9 | (lr << 16)
+		orr	r9, r9, r10, lsl #24	//r9 = r9 | (lr << 24)
 
 #ifndef CONFIG_ZBOOT_ROM
 		/* malloc space is above the relocated stack (64k max) */
@@ -310,7 +318,7 @@ restart:	adr	r0, LC0
 		 * but someone could still run this code from RAM,
 		 * in which case our reference is _edata.
 		 */
-		mov	r10, r6
+		mov	r10, r6			//
 #endif
 
 		mov	r5, #0			@ init dtb size to 0
@@ -334,12 +342,13 @@ restart:	adr	r0, LC0
  * dtb data will get relocated along with the kernel if necessary.
  */
 
-		ldr	lr, [r6, #0]
+		ldr	lr, [r6, #0]		//lr = *(_edata) zImage의 끝의 값
 #ifndef __ARMEB__
 		ldr	r1, =0xedfe0dd0		@ sig is 0xd00dfeed big endian
 #else
 		ldr	r1, =0xd00dfeed
 #endif
+		//DTB를 사용하면 위 값이 zImage의 끝에 넣어져 있다.
 		cmp	lr, r1
 		bne	dtb_check_done		@ not found
 
@@ -353,11 +362,11 @@ restart:	adr	r0, LC0
 		 * area.  No GOT fixup has occurred yet, but none of the
 		 * code we're about to call uses any global variable.
 		*/
-		add	sp, sp, #0x10000
-		stmfd	sp!, {r0-r3, ip, lr}
-		mov	r0, r8
-		mov	r1, r6
-		sub	r2, sp, r6
+		add	sp, sp, #0x10000	    //sp = sp + 64k ( sp사이즈를 + 64k한다)
+		stmfd	sp!, {r0-r3, ip, lr}	    //*(sp -4) = r0, *(sp - 8) = r1, ... *(sp - 24) = lr, sp -= 24
+		mov	r0, r8			    //r0 = atags/device tree pointer
+		mov	r1, r6			    //r1 = _edata
+		sub	r2, sp, r6		    //r2 = sp - _edata
 		bl	atags_to_fdt
 
 		/*
@@ -365,18 +374,22 @@ restart:	adr	r0, LC0
 		 * pointed by r8.  Try the typical 0x100 offset from start
 		 * of RAM and hope for the best.
 		 */
+		// start of ram + offset 0x100 보통 ATAG가 오는 주소
+		// 0x100의 의미: 통상적인 ATAG의 위치 
 		cmp	r0, #1
-		sub	r0, r4, #TEXT_OFFSET
+		sub	r0, r4, #TEXT_OFFSET	    // TEXT_OFFSET = 0x00008000
 		add	r0, r0, #0x100
 		mov	r1, r6
 		sub	r2, sp, r6
 		bleq	atags_to_fdt
 
-		ldmfd	sp!, {r0-r3, ip, lr}
-		sub	sp, sp, #0x10000
+		ldmfd	sp!, {r0-r3, ip, lr}	    // stack에 넣은 값 복원
+		sub	sp, sp, #0x10000	    // malloc 으로 잡아 놓은 값 복원
 #endif
 
 		mov	r8, r6			@ use the appended device tree
+						// 위에서 fdt 설정 완료. r8 을 다른 용도로 사용 가능 
+						// r8: dtb address 값
 
 		/*
 		 * Make sure that the DTB doesn't end up in the final
@@ -384,11 +397,13 @@ restart:	adr	r0, LC0
 		 * kernel size to compensate if that .bss size is larger
 		 * than the relocated code.
 		 */
-		ldr	r5, =_kernel_bss_size
+		ldr	r5, =_kernel_bss_size	// = ?: pesudo instruction.
+						// mov 와 동작은 동일, 32bit 전체를 사용
+						// _kernel_bss_size: 압축 풀린 kernel bss 사이즈 
 		adr	r1, wont_overwrite
-		sub	r1, r6, r1
-		subs	r1, r5, r1
-		addhi	r9, r9, r1
+		sub	r1, r6, r1		// r1 = device tree 주소 -  wont_overwrite의 주소 
+		subs	r1, r5, r1		// _kernel_bss_size - r1
+		addhi	r9, r9, r1		// if (r5 > r1) 
 
 		/* Get the dtb's size */
 		ldr	r5, [r6, #4]
@@ -405,9 +420,9 @@ restart:	adr	r0, LC0
 		bic	r5, r5, #7
 
 		/* relocate some pointers past the appended dtb */
-		add	r6, r6, r5
-		add	r10, r10, r5
-		add	sp, sp, r5
+		add	r6, r6, r5	    // r6(_edata) = dtb 시작주소 + dtb size
+		add	r10, r10, r5	    // r10(zimage 끝주소) = r10 + dtb size
+		add	sp, sp, r5	    // sp = sp + dtb size
 dtb_check_done:
 #endif
 
@@ -420,13 +435,16 @@ dtb_check_done:
  *   r4 - 16k page directory >= r10 -> OK
  *   r4 + image length <= address of wont_overwrite -> OK
  */
-		add	r10, r10, #16384
-		cmp	r4, r10
-		bhs	wont_overwrite
+		add	r10, r10, #16384    // r10 = r10(zimage 끝주소)  dtb size + 16K
+		cmp	r4, r10		    // r4 : final kernal address
+		bhs	wont_overwrite	    // 겹치지 않는 경우
 		add	r10, r4, r9
 		adr	r9, wont_overwrite
 		cmp	r10, r9
-		bls	wont_overwrite
+		bls	wont_overwrite	    
+		
+		
+// 겹치는 경우
 
 /*
  * Relocate ourselves past the end of the decompressed kernel.
@@ -440,6 +458,8 @@ dtb_check_done:
 		 * the relocation code added. This avoids overwriting
 		 * ourself when the offset is small.
 		 */
+		// 256 더하는 이유? 겹치지 않도록 여유공간 확보 하기위함. 
+		// r10 = end of the decompressed kernel + (reloc_code_end - restart + 256) & ~255)
 		add	r10, r10, #((reloc_code_end - restart + 256) & ~255)
 		bic	r10, r10, #255
 
@@ -454,7 +474,8 @@ dtb_check_done:
 		cmp	r0, #HYP_MODE
 		bne	1f
 
-		bl	__hyp_get_vectors
+		bl	__hyp_get_vectors	// HVC vector call 0 을 수행
+						// FIXME: Hyperviser 코드분석시 추후 검토 요망
 		sub	r0, r0, r5
 		add	r0, r0, r10
 		bl	__hyp_set_vectors
@@ -462,14 +483,18 @@ dtb_check_done:
 #endif
 
 		sub	r9, r6, r5		@ size to copy
+						// r6 : _edata, r5: restart 위치 
 		add	r9, r9, #31		@ rounded up to a multiple
 		bic	r9, r9, #31		@ ... of 32 bytes
-		add	r6, r9, r5
-		add	r9, r9, r10
+		add	r6, r9, r5		// r6 = size + restart 위치 -> source end address 구한 결과
+		add	r9, r9, r10             // destination end address 구한 결과
 
-1:		ldmdb	r6!, {r0 - r3, r10 - r12, lr}
-		cmp	r6, r5
-		stmdb	r9!, {r0 - r3, r10 - r12, lr}
+		
+		
+1:		ldmdb	r6!, {r0 - r3, r10 - r12, lr}	// decrement before
+							// r0 = *(r6 - 4) ... lr = *(r6 - 32) r6 = r6 - 32
+		cmp	r6, r5				// source end address 까지 왔는지 비교	
+		stmdb	r9!, {r0 - r3, r10 - r12, lr}	// load한것 store 
 		bhi	1b
 
 		/* Preserve offset to relocated code. */
@@ -600,8 +625,10 @@ LC0:		.word	LC0			@ r1
 		.word	_end			@ r3
 		.word	_edata			@ r6
 		.word	input_data_end - 4	@ r10 (inflated size location)
+		// -4를 하는 이유는? (align 2가 없는데 무조건 -4를 해도 되는가?는 아님)
+		// input_data_end의 끝에 압축을 푼 kernel의 사이즈가 들어가므로 -4를 해줌으로 실제 input_data_end가 됨 
 		.word	_got_start		@ r11
-		.word	_got_end		@ ip
+		.word	_got_end		@ ip // r12
 		.word	.L_user_stack_end	@ sp
 		.size	LC0, . - LC0
 
@@ -893,35 +920,113 @@ __armv7_mmu_cache_on:
 		blne	__setup_mmu		// VMSA를 지원하면 __setup_mmu로 이동한다.
 		mov	r0, #0
 		mcr	p15, 0, r0, c7, c10, 4	@ drain write buffer
+						// data write buffer 용어가 변경 됨 -> data sync barrier (DSB)
+						// Cache 가 아닌데도 hw적으로 data write 되지 않았을 수가 있음
+						// 확실하게 write buffer 있는 data를 memory에 써주도록 함 
+						// A.R.M : 152p(A3.8.3), 1484p(Table B3-42)
 		tst	r11, #0xf		@ VMSA
 		mcrne	p15, 0, r0, c8, c7, 0	@ flush I,D TLBs
+						// invalidate entire unified TLB임, TLB에 있던 data를 무효화 함 
+						// TLB는 page table의 cache임 
+						// MMU를 켜기전에 TLB(cache) 남아 있는 기존 정보를 무효화 함
+						// A.R.M : 1485p(Table B3-42), 1470p(B3.17.1), 1497p(B3.18.7)
 #endif
 		mrc	p15, 0, r0, c1, c0, 0	@ read control reg
+						// control register 값을 r0에 넣음
+						// A.R.M : 1705p(B4.1.130 SCTLR, System Control Register, VMSA)
 		bic	r0, r0, #1 << 28	@ clear SCTLR.TRE
+						// TRE: TEX remap enable
+						// TEX: type extension -> memory attribute를 확장함
+						// TEX 값을 remap 할수 있는데 하지 않겠다는 의미임
+						// remap의 의미: 다른 위치의 정보로 대채체 한다는 의미임 
+						// A.R.M: 1367p(B3.8.2 Short-descriptor format memory region attributes, without TEX remap)
 		orr	r0, r0, #0x5000		@ I-cache enable, RR cache replacement
+						// control register의 12,14 bit를 set
+						// 12bit: I-cache, 14bit: RR cache replacement - 1: round robin
 		orr	r0, r0, #0x003c		@ write buffer
+						// 0x3c == 0b111100
+						// 5bit: CP15 Barrier enable, 4,3bit: reserved (should be set), 2bit: D-cache 
+						// FIXME : 위에서 barrier enable을 했는데 여기서 다시 CP15 barrier을 enable 하는 이유?
+						// mcr	p15, 0, r0, c7, c10, 4	@ drain write buffer <-- 요기서 했었음 
+						// A.R.M: 1710p
+						// SCTLR[5]   - CP15BEN(CP15 barrier enable)
+						// SCTLR[4:3] - Reserved, RAO/SBOP(Read-As-One, Should-Be-One-or-Preserved on writes.)
+						// SCTLR[2]   - Cache Enable
 		bic	r0, r0, #2		@ A (no unaligned access fault)
+						// unaligned access fault 기능을 끄겠다는 뜻.
 		orr	r0, r0, #1 << 22	@ U (v6 unaligned access model)
 						@ (needed for ARM1176)
+						// SCTLR[22]  - U bit set, arm11 지원 코드
+						// arm11은 이 bit가 programmable 함
+						// A.R.M: 2728p(Glossary)
 #ifdef CONFIG_MMU
-#ifdef CONFIG_CPU_ENDIAN_BE8
+#ifdef CONFIG_CPU_ENDIAN_BE8			// exynos 5440의 config에는 꺼져있음.
 		orr	r0, r0, #1 << 25	@ big-endian page tables
+						// SCTLR[25]  - EE(Exception Endianness)
+						// exception이 발생시 endian을 big endian으로 처리
+						// page table 처리시 endian을 big endian으로 처리
 #endif
 		mrcne   p15, 0, r6, c2, c0, 2   @ read ttb control reg
+						// TBL용 control register를 r6에 읽어옴
+						// A.R.M: 1722p
 		orrne	r0, r0, #1		@ MMU enabled
 		movne	r1, #0xfffffffd		@ domain 0 = client
+						// DACR (damain access control register) 에 넣을 값임 
+						// page table 변경 없이 access permission의 domain 전체 값을 변경
+						// page table 은 damain 0로 설정 되어 있으므로 page table AP bit로 permission 설정
+						// Client내용: Accesses are checked against the permission bits 
+						//             in the translation tables 
+						// A.R.M: 1558p
 		bic     r6, r6, #1 << 31        @ 32-bit translation system
+						// A.R.M: 1722p
+						// Large의 경우 40bit
+						// 
 		bic     r6, r6, #3 << 0         @ use only ttbr0
+						// A.R.M : 1726p, 1723p, 1330p(B3.5.4)
+						// 여기서는 TTBR0의 폭을 [31:14-N(0)] 으로 설정.
+						// TTBR0은 User가 쓰고, TTBR1은 커널이 사용한다.
+						//
+						// FIXME: ttbr이 무엇인가?
+						//
+						// 약어
+						//   - TTBR: Translation Table Base Register
+						//   - TLB : Translation Lookaside Buffer
+						//
+						// 참조
+						//  - http://wiki.kldp.org/KoreanDoc/html/EmbeddedKernel-KLDP/arm.mmu.html
+						//  - http://kth3321.blogspot.kr/2013/04/arm-cortex-1.html
+
 		mcrne	p15, 0, r3, c2, c0, 0	@ load page table pointer
+						// TTBR0에 r3를 저장.
+						// r3 = 0x40008000 - 0x4000(16384) = 0x40004000
+
 		mcrne	p15, 0, r1, c3, c0, 0	@ load domain access control
+						// 위에서 도메인 D0를 client로 설정한 것을 쓴다.
+						// r1 = #0xfffffffd
+
 		mcrne   p15, 0, r6, c2, c0, 2   @ load ttb control
+						// TTBCR에 r6를 저장.
+						// TTBCR[31, 1,0]을 clear
 #endif
-		mcr	p15, 0, r0, c7, c5, 4	@ ISB
+		mcr	p15, 0, r0, c7, c5, 4	@ ISB......<1>
+						// ISB: Instruction Barrier
+						// 위에서 r0를 다음과 같이 설정하였음.
+						//
+						// A.R.M : 389p (A8.8.53)
+						//    ISB가 필요한 경우
+						//       1. Address Space Identifier (ASID)
+						//       2. TLB maintenance operations, 
+						//       3. branch predictor maintenance operations, 
+						//       4. and all changes to the CP15 registers
 		mcr	p15, 0, r0, c1, c0, 0	@ load control register
+						// r0에 설정했던 내용을 CP15.System Control Register에 Load
 		mrc	p15, 0, r0, c1, c0, 0	@ and read it back
 		mov	r0, #0
-		mcr	p15, 0, r0, c7, c5, 4	@ ISB
-		mov	pc, r12
+		mcr	p15, 0, r0, c7, c5, 4	@ ISB......<2>
+						// FIXME: ISB<1>, <2>의 역할은 무엇?
+						// 참조
+						//   - http://www.iamroot.org/xe/Kernel_8_ARM/58427
+		mov	pc, r12			// 'bl	cache_on'을 호출했던 곳으로 복귀
 
 __fa526_cache_on:
 		mov	r12, lr
@@ -1293,8 +1398,13 @@ hierarchical:
 		mcr	p15, 0, r10, c7, c10, 5	@ DMB
 		stmfd	sp!, {r0-r7, r9-r11}
 		mrc	p15, 1, r0, c0, c0, 1	@ read clidr
+						// cache level id register
+						// T.R.M: 121p(4.3.22)
 		ands	r3, r0, #0x7000000	@ extract loc from clidr
+						// level of coherency
+						// flush 하기 위한 cache level 값을 확인
 		mov	r3, r3, lsr #23		@ left align loc bit field
+						// 하위 0 하나를 남기고 0을 모두 없앰
 		beq	finished		@ if loc is 0, then no need to clean
 		mov	r10, #0			@ start clean at cache level 0
 loop1:
@@ -1488,5 +1598,12 @@ reloc_code_end:
 
 		.align
 		.section ".stack", "aw", %nobits
-.L_user_stack:	.space	4096
+
+.L_user_stack:	.space	4096			// Stack공간을 4K만큼 잡음
 .L_user_stack_end:
+
+
+
+
+'
+
